@@ -12,7 +12,7 @@ var config   = require('../config');
  * @returns {*} defValue if value it undefined, otherwise return value
  */
 function undefCheck(value, defValue) {
-	if(typeof value === 'undefined' || value == '') {return defValue}
+	if(typeof value === 'undefined') {return defValue}
 	return value;
 }
 /**
@@ -35,8 +35,6 @@ function hexToColor(hex) {
  */
 function contentEdit(content) {
 	content = content.replace(/\n/g, '\n 			');
-	// Replace markdown symbols with something a bit more sensible
-	content = content.replace(/[\)#_*~`\]\[]/g, '').replace(/\(/g, ':');
 	return content;
 }
 
@@ -57,8 +55,7 @@ function generatePlainText(board, tickets) {
 	tickets.map(function(t) {
 		return '\n' +
 				'------------------------------------------\n' +
-			'Heading:    	' + contentEdit(undefCheck(t.heading, 'empty')) + '\n\n' +
-			'Content:    	' + contentEdit(undefCheck(t.content, 'empty')) + '\n\n' +
+				'Content:    	' + contentEdit(undefCheck(t.content, 'empty')) + '\n\n' +
 				'Color: 	    	' + hexToColor(t.color) + '\n' + 
 				'------------------------------------------\n';
 	}).join('') + '\n' +
@@ -104,11 +101,8 @@ function generateCSV(board, tickets) {
  */
 
 function postImage(req, board, tickets, callback) {
-	if(tickets == null)
-		var tickets = [];
-
 	var postData = { 
-		'name': board.name,
+		'id': req.resolved.board.id,
 		'background': board.background,
 		'customBackground': board.customBackground,
 		'size': {

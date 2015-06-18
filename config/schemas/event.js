@@ -33,7 +33,7 @@ var EventSchema = module.exports = new mongoose.Schema({
 		 */
 		type: {
 			type: String,
-			enum: [ 'user', 'guest' ]
+			enum: [ 'standard', 'temporary' ]
 		},
 
 		/**
@@ -95,4 +95,3 @@ EventSchema.options.toJSON.transform = function(doc, ret) {
  * BUG See 'config/schemas/board.js' for details.
  */
 EventSchema.options.toObject.transform = EventSchema.options.toJSON.transform;
-

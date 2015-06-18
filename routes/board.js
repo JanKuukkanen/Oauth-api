@@ -13,6 +13,7 @@ var middleware = require('../middleware');
 var Event  = mongoose.model('event');
 var Board  = mongoose.model('board');
 var Ticket = mongoose.model('ticket');
+var User   = mongoose.model('user');
 
 var Router   = express.Router();
 var ObjectId = mongoose.Types.ObjectId;
@@ -38,7 +39,7 @@ Router.route('/boards')
 	.get(function(req, res, next) {
 		var boardQuery = null;
 
-		if(req.user.type === 'guest') {
+		if(req.user.type === 'temporary') {
 			// Guests can only see the board they have access to...
 			boardQuery = Board.find({ _id: req.user.access });
 		}
@@ -76,15 +77,6 @@ Router.route('/boards')
 		var payload           = req.body;
 		    payload.createdBy = req.user.id;
 
-		if(payload.size.height <= 0 || payload.size.width <= 0) {
-			return next(utils.error(400, 'Board size must be larger than 0!'));
-		}
-
-		if(!(payload.size.height % 1 === 0) || !(payload.size.width % 1 === 0)) {
-			return next(utils.error(400, 'Board size must be whole numbers!'));
-		}
-
-		if (payload.size)
 		new Board(payload).save(function(err, board) {
 			if(err) {
 				return next(utils.error(400, err));
@@ -159,18 +151,6 @@ Router.route('/boards/:board_id')
 
 		var ticketWidth = 192;
 		var ticketHeight = 108;
-
-		if (!req.resolved.board) {
-			return next(utils.error(404, 'Board not found!'));
-		}
-
-		if(req.resolved.board.size.height <= 0 || req.resolved.board.size.width <= 0) {
-			return next(utils.error(400, 'Board size must be larger than 0!'));
-		}
-
-		if(!(req.resolved.board.size.height % 1 === 0) || !(req.resolved.board.size.width % 1 === 0)) {
-			return next(utils.error(400, 'Board size must be whole numbers!'));
-		}
 
 		return req.resolved.board.save(function(err, board) {
 			if(err) {
@@ -270,18 +250,12 @@ Router.route('/boards/:board_id/export')
 					return next(utils.error(500, err));
 				}
 
-				if(board.name == '')
-					board.name = 'board';
-				else
-					// Edit board name incase name is not valid filename
-					board.name = utils.sanitize(board.name,'');
-
 				if(format == 'csv') {
-					return res.attachment(board.name + '.csv').send(200, exportAs.generateCSV(board, tickets));
+					return res.attachment('board.csv').send(200, exportAs.generateCSV(board, tickets));
 				}
 
 				if(format == 'plaintext') {
-					return res.attachment(board.name + '.txt').send(200, exportAs.generatePlainText(board, tickets));
+					return res.attachment('board.txt').send(200, exportAs.generatePlainText(board, tickets));
 				}
 	
 				if(format == 'image') { 
@@ -293,9 +267,38 @@ Router.route('/boards/:board_id/export')
 				var boardObject     	= board;
 				    boardObject.tickets = tickets;
 
-				return res.attachment(board.name + '.json').json(200, boardObject);		
+				return res.attachment('board.json').json(200, boardObject);		
 			});
 		});
+	});
+
+Router.route('/boards/:board_id/export/image')
+	/**
+	 * Export board image
+	 */
+	.get(middleware.authenticate('user', 'guest'))
+	.get(middleware.relation('user', 'guest'))
+	.get(function(req, res, next) {
+		var imagepath = 'image/board.png';
+		var jadePath = 'image/app.jade';
+		var options = {
+			tickets: board.tickets 
+		};
+
+		// Replace app.jade and image folder to smarter name
+		var html = jade.renderFile(jadePath, options);
+
+		// Callback for webshot
+		function imageCallback(err) {
+			if(err) {
+				return next(utils.error(503, err))
+			}
+
+			return res.attachment(path);
+		}
+
+		// Handle errors and attacment returns on callback
+		return exportAs.generateImage(html, path, imageCallback);
 	});
 
 Router.route('/boards/:board_id/tickets')
@@ -361,7 +364,6 @@ Router.route('/boards/:board_id/tickets')
 					'id':       ticket._id,
 					'color':    ticket.color,
 					'content':  ticket.content,
-					'heading':  ticket.heading,
 					'position': ticket.position,
 				}
 			}).save(function(err, ev) {
@@ -399,7 +401,6 @@ Router.route('/boards/:board_id/tickets/:ticket_id')
 	 *     'color':    '#FFF'
 	 *     'heading':  'new-heading'
 	 *     'content':  'new-content'
-	 *     'heading':  'new-heading'
 	 *     'position': {
 	 *       'x', 'y', 'z'
 	 *     }
@@ -434,15 +435,15 @@ Router.route('/boards/:board_id/tickets/:ticket_id')
 
 					'oldAttributes': {
 						'color':    old.color,
-						'content':  old.content,
 						'heading':  old.heading,
+						'content':  old.content,
 						'position': old.position,
 					},
 
 					'newAttributes': {
 						'color':    ticket.color,
-						'content':  ticket.content,
 						'heading':  ticket.heading,
+						'content':  ticket.content,
 						'position': ticket.position,
 					},
 				}
@@ -716,7 +717,7 @@ Router.route('/boards/:board_id/access/:code')
 		// TODO Guest must have a valid 'username'.
 		var guestPayload = {
 			id:         require('crypto').randomBytes(4).toString('hex'),
-			type:       'guest',
+			type:       'temporary',
 			access:     board.id,
 			username:   req.body.username,
 			accessCode: board.accessCode
@@ -724,6 +725,29 @@ Router.route('/boards/:board_id/access/:code')
 
 		// Generate the 'guest-token' for access.
 		var guestToken = jwt.sign(guestPayload, config.token.secret);
+
+		var session = {
+			user_agent: req.headers['user-agent'],
+			token:      guestToken,
+			created_at: new Date()
+		};
+
+		new User({ name: req.body.username,
+			account_type: 'temporary',
+			created_at: new Date(),
+			sessions: [session] })
+			.save(function(err, user) {
+				if(err) {
+					if(err.name == 'ValidationError') {
+						return next(utils.error(400, err));
+					}
+					if(err.name == 'MongoError' && err.code == 11000) {
+						return next(utils.error(409, 'User already exists'));
+					}
+					return next(utils.error(500, err));
+				}
+			});
+
 
 		new Event({
 			'type': 'BOARD_GUEST_JOIN',
